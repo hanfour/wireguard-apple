@@ -262,7 +262,19 @@ public class WireGuardAdapter {
                     let (wgConfig, resolutionResults) = settingsGenerator.uapiConfiguration()
                     self.logEndpointResolutionResults(resolutionResults)
 
-                    wgSetConfig(handle, wgConfig)
+                    // wgSetConfig already returns the wireguard-go
+                    // IpcSet result via the Go bridge — see
+                    // Sources/WireGuardKitGo/api-apple.go:146-163,
+                    // which returns ipcErr.ErrorCode() (e.g. -22 for
+                    // "device closed") on failure or -1 for other
+                    // errors. Without this check, IPC failures land
+                    // as a silent half-up state where the tunnel runs
+                    // with a stale (or empty) peer set and Swift sees
+                    // no error.
+                    let result = wgSetConfig(handle, wgConfig)
+                    if result != 0 {
+                        throw WireGuardAdapterError.startWireGuardBackend(Int32(result))
+                    }
                     #if os(iOS)
                     wgDisableSomeRoamingForBrokenMobileSemantics(handle)
                     #endif
