@@ -170,6 +170,49 @@ public class WireGuardAdapter {
         }
     }
 
+    /// Points existing peers at new endpoints without touching anything else.
+    ///
+    /// `update(tunnelConfiguration:)` replaces every peer, reapplies the
+    /// network settings and flips `reasserting`, which is a lot of churn
+    /// (route messages, a status change for the GUI) for a change of one
+    /// address. This sends only `public_key` + `endpoint` for each peer
+    /// through the UAPI, which updates a peer in place and leaves its
+    /// session keys alone.
+    /// - Parameters:
+    ///   - endpoints: peer public key to `host:port` (an IP literal).
+    ///   - keepalive: when set, each peer's persistent keepalive is cleared
+    ///     and set again to this many seconds. wireguard-go sends a
+    ///     keepalive at once when the interval goes from off to on, which
+    ///     makes the peer send a packet to the new endpoint right away
+    ///     (needed to open a NAT mapping for hole punching) instead of
+    ///     whenever the next packet happens to flow.
+    ///   - completionHandler: nil on success.
+    public func updateEndpoints(_ endpoints: [PublicKey: String],
+                                keepalive: UInt16? = nil,
+                                completionHandler: @escaping (WireGuardAdapterError?) -> Void) {
+        workQueue.async {
+            guard case .started(let handle, _) = self.state else {
+                completionHandler(.invalidState)
+                return
+            }
+            var uapi = ""
+            for (key, endpoint) in endpoints {
+                uapi.append("public_key=\(key.hexKey)\n")
+                uapi.append("endpoint=\(endpoint)\n")
+                if let keepalive {
+                    uapi.append("persistent_keepalive_interval=0\n")
+                    uapi.append("persistent_keepalive_interval=\(keepalive)\n")
+                }
+            }
+            let result = wgSetConfig(handle, uapi)
+            if result != 0 {
+                completionHandler(.startWireGuardBackend(Int32(result)))
+                return
+            }
+            completionHandler(nil)
+        }
+    }
+
     /// Start the tunnel tunnel.
     /// - Parameters:
     ///   - tunnelConfiguration: tunnel configuration.
